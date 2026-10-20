@@ -238,7 +238,7 @@ private struct DownloadJobRow: View {
             Text(job.error ?? job.status)
                 .font(.callout)
                 .foregroundStyle(job.error == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(Color.red))
-                .lineLimit(2)
+                .lineLimit(job.error == nil ? 2 : 8)
                 .textSelection(.enabled)
         }
         .padding(17)

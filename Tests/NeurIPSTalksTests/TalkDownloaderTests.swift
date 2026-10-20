@@ -13,4 +13,18 @@ final class TalkDownloaderTests: XCTestCase {
     func testInvalidDurationIsRejected() {
         XCTAssertTrue(TalkDownloader.isClearlyIncomplete(actual: 0, expected: 3_592))
     }
+
+    func testPlaylistEntryIsRestrictedToTheSelectedTalk() {
+        XCTAssertEqual(
+            TalkDownloader.primaryPlaylistSelection(for: ["playlist_index": 1]),
+            ["--playlist-items", "1"]
+        )
+    }
+
+    func testStandaloneTalkDisablesPlaylists() {
+        XCTAssertEqual(
+            TalkDownloader.primaryPlaylistSelection(for: [:]),
+            ["--no-playlist"]
+        )
+    }
 }

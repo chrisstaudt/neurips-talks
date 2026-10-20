@@ -15,7 +15,7 @@ enum TalkDownloadError: LocalizedError {
         switch self {
         case .toolMissing:
             "The bundled downloader is missing. Rebuild the app with ./build_app.sh --download-tools."
-        case .commandFailed(let detail): "Downloader failed: \(detail)"
+        case .commandFailed(let detail): "Downloader failed:\n\(Self.conciseFailure(detail))"
         case .invalidMetadata: "The page did not contain a readable SlidesLive presentation."
         case .noSlides: "This presentation does not expose synchronized slides."
         case .noVideo: "No compatible video and audio streams were found."
@@ -29,6 +29,19 @@ enum TalkDownloadError: LocalizedError {
     private func clock(_ seconds: Double) -> String {
         let total = max(0, Int(seconds.rounded()))
         return String(format: "%d:%02d:%02d", total / 3600, (total % 3600) / 60, total % 60)
+    }
+
+    private static func conciseFailure(_ detail: String) -> String {
+        let lines = detail
+            .split(whereSeparator: \Character.isNewline)
+            .map { String($0).trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        let diagnosticLines = lines.filter {
+            let lowered = $0.lowercased()
+            return lowered.contains("error") || lowered.contains("failed") || lowered.contains("unable")
+        }
+        let useful = diagnosticLines.isEmpty ? Array(lines.suffix(6)) : Array(diagnosticLines.suffix(6))
+        return useful.isEmpty ? "No diagnostic details were returned." : useful.joined(separator: "\n")
     }
 }
 
@@ -168,11 +181,12 @@ struct TalkDownloader {
             let audioFormat = bestAudio(in: formats)
             let videoID = videoFormat["format_id"] as? String ?? ""
             let videoHasAudio = codec(videoFormat["acodec"]) != "none"
+            let playlistSelection = primaryPlaylistSelection(for: metadata)
             let videoTemplate = output.appendingPathComponent("video-track.%(ext)s").path
             update("Downloading presenter video…", 0.28)
             try runStreaming(
                 tool,
-                arguments: common + ["--no-playlist", "--newline", "--format", videoID, "--output", videoTemplate, pageURL],
+                arguments: common + playlistSelection + ["--newline", "--format", videoID, "--output", videoTemplate, pageURL],
                 phaseStart: 0.28,
                 phaseSize: videoHasAudio ? 0.67 : 0.43,
                 label: "Downloading presenter video",
@@ -194,7 +208,7 @@ struct TalkDownloader {
                 update("Downloading audio…", 0.72)
                 try runStreaming(
                     tool,
-                    arguments: common + ["--no-playlist", "--newline", "--format", audioID, "--output", audioTemplate, pageURL],
+                    arguments: common + playlistSelection + ["--newline", "--format", audioID, "--output", audioTemplate, pageURL],
                     phaseStart: 0.72,
                     phaseSize: 0.20,
                     label: "Downloading audio",
@@ -353,6 +367,13 @@ struct TalkDownloader {
     }
 
     private static func codec(_ value: Any?) -> String { value as? String ?? "none" }
+
+    static func primaryPlaylistSelection(for metadata: [String: Any]) -> [String] {
+        if let index = (metadata["playlist_index"] as? NSNumber)?.intValue, index > 0 {
+            return ["--playlist-items", String(index)]
+        }
+        return ["--no-playlist"]
+    }
 
     private static func bestVideo(in formats: [[String: Any]], maxHeight: Int) -> [String: Any]? {
         let videos = formats.filter {
