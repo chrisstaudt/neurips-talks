@@ -30,6 +30,9 @@ struct PlayerView: View {
     let enterFullScreen: () -> Void
 
     @State private var player: AVPlayer?
+    @State private var playerPreparationTask: Task<Void, Never>?
+    @State private var isPreparingVideo = true
+    @State private var videoLoadFailed = false
     @State private var activeSlide = 0
     @State private var timeObserver: Any?
     @State private var isPlaying = false
@@ -148,7 +151,7 @@ struct PlayerView: View {
             GeometryReader { geometry in
                 ZStack {
                     slideCanvas
-                    if player != nil {
+                    if player != nil || isPreparingVideo {
                         floatingVideo(in: geometry.size)
                     }
                 }
@@ -175,10 +178,29 @@ struct PlayerView: View {
     private var videoCanvas: some View {
         ZStack {
             Color.black
-            if let player { NativeVideoPlayer(player: player) }
-            else { ContentUnavailableView("Video unavailable", systemImage: "video.slash") }
+            if let player {
+                NativeVideoPlayer(player: player)
+            } else if isPreparingVideo {
+                videoLoadingIndicator
+            } else {
+                ContentUnavailableView(
+                    videoLoadFailed ? "Video could not be opened" : "Video unavailable",
+                    systemImage: "video.slash"
+                )
+                .foregroundStyle(.white)
+            }
         }
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private var videoLoadingIndicator: some View {
+        VStack(spacing: 10) {
+            ProgressView()
+                .controlSize(.small)
+            Text("Preparing video…")
+                .font(.callout.weight(.medium))
+        }
+        .foregroundStyle(.white)
     }
 
     private func floatingVideo(in bounds: CGSize) -> some View {
@@ -204,7 +226,11 @@ struct PlayerView: View {
             .contentShape(Rectangle())
             .gesture(dragGesture(panel: panelSize, in: bounds, defaultPosition: defaultPosition))
 
-            if let player { NativeVideoPlayer(player: player) }
+            if let player {
+                NativeVideoPlayer(player: player)
+            } else {
+                videoLoadingIndicator
+            }
         }
         .frame(width: panelSize.width, height: panelSize.height)
         .background(.black)
@@ -229,6 +255,7 @@ struct PlayerView: View {
             .buttonStyle(.borderedProminent)
             .tint(.neuripsAccent)
             .keyboardShortcut(.space, modifiers: [])
+            .disabled(player == nil)
 
             Button { select(activeSlide - 1) } label: {
                 Label("Previous Slide", systemImage: "chevron.left")
@@ -259,7 +286,7 @@ struct PlayerView: View {
                 .tracking(1.2)
                 .foregroundStyle(.secondary)
             ScrollView(.horizontal) {
-                HStack(spacing: 10) {
+                LazyHStack(spacing: 10) {
                     ForEach(Array(item.manifest.slides.enumerated()), id: \.element.id) { index, slide in
                         Button { select(index) } label: {
                             VStack(alignment: .leading, spacing: 5) {
@@ -310,25 +337,52 @@ struct PlayerView: View {
     }
 
     private func preparePlayer() {
-        guard let name = item.manifest.video else { return }
-        let newPlayer = AVPlayer(url: item.folder.appendingPathComponent(name))
-        player = newPlayer
-        timeObserver = newPlayer.addPeriodicTimeObserver(
-            forInterval: CMTime(seconds: 0.25, preferredTimescale: 600),
-            queue: .main
-        ) { time in
-            let seconds = time.seconds
-            activeSlide = item.manifest.slides.lastIndex { $0.start <= seconds + 0.05 } ?? 0
-            isPlaying = newPlayer.timeControlStatus == .playing
+        playerPreparationTask?.cancel()
+        videoLoadFailed = false
+        guard let name = item.manifest.video else {
+            isPreparingVideo = false
+            return
+        }
+        isPreparingVideo = true
+        let asset = AVURLAsset(url: item.folder.appendingPathComponent(name))
+        playerPreparationTask = Task { @MainActor in
+            do {
+                let isPlayable = try await asset.load(.isPlayable)
+                guard !Task.isCancelled else { return }
+                guard isPlayable else {
+                    videoLoadFailed = true
+                    isPreparingVideo = false
+                    return
+                }
+                let newPlayer = AVPlayer(playerItem: AVPlayerItem(asset: asset))
+                player = newPlayer
+                timeObserver = newPlayer.addPeriodicTimeObserver(
+                    forInterval: CMTime(seconds: 0.25, preferredTimescale: 600),
+                    queue: .main
+                ) { time in
+                    let seconds = time.seconds
+                    activeSlide = item.manifest.slides.lastIndex { $0.start <= seconds + 0.05 } ?? 0
+                    isPlaying = newPlayer.timeControlStatus == .playing
+                }
+                isPreparingVideo = false
+            } catch is CancellationError {
+                return
+            } catch {
+                videoLoadFailed = true
+                isPreparingVideo = false
+            }
         }
     }
 
     private func releasePlayer() {
+        playerPreparationTask?.cancel()
+        playerPreparationTask = nil
         if let timeObserver { player?.removeTimeObserver(timeObserver) }
         timeObserver = nil
         player?.pause()
         player = nil
         isPlaying = false
+        isPreparingVideo = false
     }
 
     private func togglePlayback() {
