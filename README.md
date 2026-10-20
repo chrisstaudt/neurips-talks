@@ -77,6 +77,14 @@ The regular CI workflow builds and tests every pull request and push to `main`. 
 
 Talks remain in the library folder on your Mac. The app contacts the supplied NeurIPS or SlidesLive page and the media hosts referenced by it. If browser access is selected, the bundled downloader reads the relevant local browser session; macOS may request Keychain or file access. Browser cookies are not copied into the talk library or application preferences.
 
+## Third-party software
+
+NeurIPS Talks invokes [yt-dlp](https://github.com/yt-dlp/yt-dlp) as a separate executable to read presentation metadata and download media. Release builds bundle the official universal `yt-dlp_macos` executable so users do not need to install it separately.
+
+The yt-dlp source is offered under the Unlicense. The official PyInstaller-based macOS executable also contains components under GPLv3+ and other licenses; the upstream project describes the combined release executable as GPLv3+. Its exact upstream license and third-party notices are downloaded alongside the executable and included in the app under `Contents/Resources/Licenses`.
+
+The MIT license in this repository applies to the NeurIPS Talks source code, not to bundled third-party software. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for details.
+
 ## Project structure
 
 - `Sources/NeurIPSTalks` — SwiftUI application, downloader, and native player

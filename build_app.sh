@@ -39,6 +39,13 @@ if $DOWNLOAD_TOOLS; then
     -o "$TOOLS_DIR/yt-dlp_macos.download"
   chmod +x "$TOOLS_DIR/yt-dlp_macos.download"
   mv "$TOOLS_DIR/yt-dlp_macos.download" "$TOOLS_DIR/yt-dlp_macos"
+
+  YTDLP_VERSION="$("$TOOLS_DIR/yt-dlp_macos" --version)"
+  YTDLP_LICENSE_URL="https://raw.githubusercontent.com/yt-dlp/yt-dlp/$YTDLP_VERSION"
+  mkdir -p "$TOOLS_DIR/licenses"
+  curl -fL --retry 3 "$YTDLP_LICENSE_URL/LICENSE" -o "$TOOLS_DIR/licenses/LICENSE"
+  curl -fL --retry 3 "$YTDLP_LICENSE_URL/THIRD_PARTY_LICENSES.txt" -o "$TOOLS_DIR/licenses/THIRD_PARTY_LICENSES.txt"
+  /usr/bin/printf '%s\n' "$YTDLP_VERSION" > "$TOOLS_DIR/licenses/VERSION"
 fi
 
 BUILD_ARGUMENTS=(-c release)
@@ -51,10 +58,12 @@ swift build "${BUILD_ARGUMENTS[@]}"
 BIN_DIR="$(swift build "${BUILD_ARGUMENTS[@]}" --show-bin-path)"
 
 rm -rf "$APP_DIR"
-mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources/Tools"
+mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources/Tools" "$APP_DIR/Contents/Resources/Licenses/yt-dlp"
 cp "$BIN_DIR/NeurIPSTalks" "$APP_DIR/Contents/MacOS/NeurIPSTalks"
 cp "$ROOT_DIR/AppResources/Info.plist" "$APP_DIR/Contents/Info.plist"
 cp "$ROOT_DIR/AppResources/AppIcon.icns" "$APP_DIR/Contents/Resources/AppIcon.icns"
+cp "$ROOT_DIR/LICENSE" "$APP_DIR/Contents/Resources/Licenses/NeurIPS-Talks-MIT.txt"
+cp "$ROOT_DIR/THIRD_PARTY_NOTICES.md" "$APP_DIR/Contents/Resources/Licenses/THIRD_PARTY_NOTICES.md"
 
 VERSION="${APP_VERSION:-}"
 VERSION="${VERSION#v}"
@@ -66,6 +75,15 @@ fi
 if [[ -f "$TOOLS_DIR/yt-dlp_macos" ]]; then
   cp "$TOOLS_DIR/yt-dlp_macos" "$APP_DIR/Contents/Resources/Tools/yt-dlp"
   chmod +x "$APP_DIR/Contents/Resources/Tools/yt-dlp"
+  if [[ -f "$TOOLS_DIR/licenses/LICENSE" && -f "$TOOLS_DIR/licenses/THIRD_PARTY_LICENSES.txt" ]]; then
+    cp "$TOOLS_DIR/licenses/LICENSE" "$APP_DIR/Contents/Resources/Licenses/yt-dlp/LICENSE"
+    cp "$TOOLS_DIR/licenses/THIRD_PARTY_LICENSES.txt" "$APP_DIR/Contents/Resources/Licenses/yt-dlp/THIRD_PARTY_LICENSES.txt"
+    if [[ -f "$TOOLS_DIR/licenses/VERSION" ]]; then
+      cp "$TOOLS_DIR/licenses/VERSION" "$APP_DIR/Contents/Resources/Licenses/yt-dlp/VERSION"
+    fi
+  else
+    echo "Warning: yt-dlp license files are missing. Run with --download-tools before distributing the app."
+  fi
 else
   echo "Warning: app built without yt-dlp. Run with --download-tools to bundle it."
 fi
