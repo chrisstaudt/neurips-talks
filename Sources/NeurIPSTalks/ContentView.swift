@@ -125,6 +125,7 @@ struct ContentView: View {
                     }
                 )) {
                     ForEach(model.library) { item in
+                        let isSelected = model.selected?.id == item.id
                         VStack(alignment: .leading, spacing: 5) {
                             Text(item.manifest.title)
                                 .font(.callout.weight(.semibold))
@@ -132,18 +133,18 @@ struct ContentView: View {
                             if !item.manifest.conferenceSummary.isEmpty {
                                 Text(item.manifest.conferenceSummary)
                                     .font(.caption.weight(.medium))
-                                    .foregroundStyle(Color.neuripsAccent)
+                                    .foregroundStyle(isSelected ? selectedSidebarText : Color.neuripsAccent)
                                     .lineLimit(1)
                             }
                             if !item.manifest.displaySpeakers.isEmpty {
                                 Label(item.manifest.displaySpeakers, systemImage: "person.2")
                                     .font(.caption)
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(isSelected ? selectedSidebarText.opacity(0.82) : Color.secondary)
                                     .lineLimit(1)
                             }
                             Label("\(item.manifest.slides.count) slides", systemImage: "rectangle.stack")
                                 .font(.caption)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(isSelected ? selectedSidebarText.opacity(0.82) : Color.secondary)
                         }
                         .padding(.vertical, 5)
                         .tag(Optional(item.id))
@@ -173,6 +174,10 @@ struct ContentView: View {
         }
         .buttonStyle(.plain)
         .foregroundStyle(.secondary)
+    }
+
+    private var selectedSidebarText: Color {
+        Color(nsColor: .selectedControlTextColor)
     }
 
     private var sidebarQueueStatus: String {
