@@ -16,19 +16,29 @@ final class DownloadJob: ObservableObject, Identifiable {
     @Published var isFinished = false
     @Published var isCancelled = false
     @Published var needsRepair = false
+    @Published var isDuplicate = false
+    let isWorkshopImport: Bool
+    let destinationRoot: URL?
+    let collectionFolder: URL?
 
     init(
         id: UUID = UUID(),
         url: String,
         title: String? = nil,
         cookieSource: BrowserCookies,
-        quality: VideoQuality
+        quality: VideoQuality,
+        isWorkshopImport: Bool = false,
+        destinationRoot: URL? = nil,
+        collectionFolder: URL? = nil
     ) {
         self.id = id
         self.url = url
         self.cookieSource = cookieSource
         self.quality = quality
         self.title = title ?? URL(string: url)?.host ?? url
+        self.isWorkshopImport = isWorkshopImport
+        self.destinationRoot = destinationRoot
+        self.collectionFolder = collectionFolder
     }
 }
 
@@ -41,6 +51,9 @@ private struct PersistedDownloadJob: Codable {
     let quality: String
     let partialFolderPath: String?
     let needsRepair: Bool?
+    let destinationRootPath: String?
+    let collectionFolderPath: String?
+    let isWorkshopImport: Bool?
 }
 
 @MainActor
@@ -75,22 +88,21 @@ final class AppModel: ObservableObject {
     }
 
     func refreshLibrary(selecting folder: URL? = nil) {
+        let previouslySelected = selected?.folder.standardizedFileURL
         try? FileManager.default.createDirectory(at: libraryDirectory, withIntermediateDirectories: true)
         let folders = (try? FileManager.default.contentsOfDirectory(
             at: libraryDirectory,
             includingPropertiesForKeys: [.isDirectoryKey],
             options: [.skipsHiddenFiles]
         )) ?? []
-        library = folders.compactMap { folder in
-            let manifestURL = folder.appendingPathComponent("presentation.json")
-            guard let data = try? Data(contentsOf: manifestURL),
-                  let manifest = try? JSONDecoder().decode(PresentationManifest.self, from: data) else { return nil }
-            return LibraryItem(folder: folder, manifest: manifest)
-        }.sorted { $0.manifest.title.localizedStandardCompare($1.manifest.title) == .orderedAscending }
+        library = folders.compactMap(loadLibraryEntry(at:))
+            .sorted { $0.manifest.title.localizedStandardCompare($1.manifest.title) == .orderedAscending }
 
         if let folder {
             selected = library.first { $0.folder.standardizedFileURL == folder.standardizedFileURL }
             showingDownloader = false
+        } else if let previouslySelected {
+            selected = library.first { $0.folder.standardizedFileURL == previouslySelected }
         }
     }
 
@@ -115,7 +127,10 @@ final class AppModel: ObservableObject {
 
     func openDownloadedTalk(_ folder: URL) {
         refreshLibrary()
-        selected = library.first { $0.folder.standardizedFileURL == folder.standardizedFileURL }
+        selected = library.first {
+            $0.folder.standardizedFileURL == folder.standardizedFileURL ||
+            $0.workshopTalks.contains { $0.folder.standardizedFileURL == folder.standardizedFileURL }
+        }
         showingDownloader = false
     }
 
@@ -129,7 +144,8 @@ final class AppModel: ObservableObject {
         if let partialFolder = job.partialFolder {
             let root = libraryDirectory.standardizedFileURL
             let target = partialFolder.standardizedFileURL
-            guard target != root, target.deletingLastPathComponent() == root else {
+            let rootPrefix = root.path.hasSuffix("/") ? root.path : root.path + "/"
+            guard target != root, target.path.hasPrefix(rootPrefix) else {
                 lastError = "The partial download is outside the current library and was not removed."
                 return
             }
@@ -154,17 +170,167 @@ final class AppModel: ObservableObject {
             return
         }
         lastError = nil
-        if let existing = jobs.first(where: { $0.url == input && $0.folder == nil }) {
-            if existing.isFinished { resumeDownload(existing) }
-            else { lastError = "That talk is already in the download queue." }
+        let isWorkshop = WorkshopLoader.isWorkshopURL(input)
+        let existingItem = isWorkshop
+            ? library.first(where: { $0.isWorkshop && canonicalEventKey($0.manifest.source) == canonicalEventKey(input) })
+            : libraryItem(matching: input)
+        if let existingItem {
+            addDuplicateJob(url: input, item: existingItem)
             downloadURL = ""
             return
         }
-        let job = DownloadJob(url: input, cookieSource: cookieSource, quality: quality)
+        if let existing = jobs.first(where: {
+            canonicalEventKey($0.url) == canonicalEventKey(input) &&
+            (!isWorkshop || $0.isWorkshopImport)
+        }) {
+            lastError = existing.isFinished && existing.folder == nil
+                ? "This download is already in the queue. Use Resume on the existing item."
+                : "This download is already in the queue."
+            downloadURL = ""
+            return
+        }
+        let job = DownloadJob(
+            url: input,
+            cookieSource: cookieSource,
+            quality: quality,
+            isWorkshopImport: isWorkshop
+        )
         jobs.insert(job, at: 0)
         downloadURL = ""
         persistPendingDownloads()
-        launchDownload(job)
+        if isWorkshop {
+            launchWorkshopImport(job)
+        } else {
+            launchDownload(job)
+        }
+    }
+
+    func downloadWorkshopSegments(_ segments: [WorkshopSegment], into workshop: LibraryItem) {
+        guard workshop.isWorkshop else { return }
+        var added = 0
+        var duplicates = 0
+        for segment in segments where segment.hasVideo {
+            if let downloaded = workshop.downloadedTalk(for: segment) {
+                addDuplicateJob(url: segment.url, item: downloaded)
+                duplicates += 1
+                continue
+            }
+            if jobs.contains(where: { canonicalEventKey($0.url) == canonicalEventKey(segment.url) }) {
+                duplicates += 1
+                continue
+            }
+            let job = DownloadJob(
+                url: segment.url,
+                title: segment.title,
+                cookieSource: cookieSource,
+                quality: quality,
+                destinationRoot: workshop.folder,
+                collectionFolder: workshop.folder
+            )
+            jobs.insert(job, at: 0)
+            launchDownload(job)
+            added += 1
+        }
+        if added == 0, duplicates > 0 {
+            lastError = "Every selected recording is already downloaded or in the queue."
+        } else {
+            lastError = nil
+        }
+        persistPendingDownloads()
+    }
+
+    func queuedJob(for segment: WorkshopSegment) -> DownloadJob? {
+        jobs.first { canonicalEventKey($0.url) == canonicalEventKey(segment.url) }
+    }
+
+    private func addDuplicateJob(url: String, item: LibraryItem) {
+        if let existing = jobs.first(where: {
+            canonicalEventKey($0.url) == canonicalEventKey(url) &&
+            $0.folder != nil &&
+            $0.isWorkshopImport == item.isWorkshop
+        }) {
+            existing.status = item.isWorkshop
+                ? workshopLibraryStatus(item)
+                : "Already in your library — no files were changed"
+            existing.isDuplicate = true
+            return
+        }
+        let job = DownloadJob(
+            url: url,
+            title: item.manifest.title,
+            cookieSource: cookieSource,
+            quality: quality,
+            isWorkshopImport: item.isWorkshop,
+            collectionFolder: library.first(where: { $0.workshopTalks.contains(item) })?.folder
+        )
+        job.folder = item.folder
+        job.progress = 1
+        job.status = item.isWorkshop
+            ? workshopLibraryStatus(item)
+            : "Already in your library — no files were changed"
+        job.isFinished = true
+        job.isDuplicate = true
+        jobs.insert(job, at: 0)
+    }
+
+    private func workshopLibraryStatus(_ item: LibraryItem) -> String {
+        let available = item.workshop?.schedule.filter(\.hasVideo).count ?? 0
+        return "Workshop already added — \(item.workshopTalks.count) of \(available) recordings downloaded"
+    }
+
+    private func launchWorkshopImport(_ job: DownloadJob) {
+        job.status = "Reading workshop schedule…"
+        job.progress = 0.05
+        job.isFinished = false
+        let jobID = job.id
+        let source = job.url
+        let task = Task {
+            do {
+                let manifest = try await WorkshopLoader.load(from: source) { message, progress in
+                    Task { @MainActor in
+                        self.updateJob(jobID, status: message, progress: progress)
+                    }
+                }
+                try Task.checkCancellation()
+                let folder = try saveWorkshop(manifest)
+                finishWorkshopImport(jobID, manifest: manifest, folder: folder)
+            } catch is CancellationError {
+                cancelledJob(jobID)
+            } catch {
+                failJob(jobID, message: error.localizedDescription)
+            }
+        }
+        downloadTasks[jobID] = task
+        persistPendingDownloads()
+    }
+
+    private func saveWorkshop(_ manifest: WorkshopManifest) throws -> URL {
+        let eventID = URL(string: manifest.source)?.pathComponents.last ?? "workshop"
+        let folder = libraryDirectory.appendingPathComponent(
+            safeFileName("workshop-\(eventID)-\(manifest.title)"),
+            isDirectory: true
+        )
+        let manifestURL = folder.appendingPathComponent("workshop.json")
+        if FileManager.default.fileExists(atPath: manifestURL.path) {
+            throw TalkDownloadError.outputExists(folder)
+        }
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .withoutEscapingSlashes]
+        try encoder.encode(manifest).write(to: manifestURL, options: .atomic)
+        return folder
+    }
+
+    private func finishWorkshopImport(_ id: UUID, manifest: WorkshopManifest, folder: URL) {
+        downloadTasks.removeValue(forKey: id)
+        guard let job = jobs.first(where: { $0.id == id }) else { return }
+        job.title = manifest.title
+        job.folder = folder
+        job.progress = 1
+        job.status = "Workshop ready — choose recordings from its schedule"
+        job.isFinished = true
+        persistPendingDownloads()
+        refreshLibrary(selecting: folder)
     }
 
     func cancelDownload(_ job: DownloadJob) {
@@ -176,6 +342,10 @@ final class AppModel: ObservableObject {
 
     func resumeDownload(_ job: DownloadJob) {
         guard job.isFinished, job.folder == nil else { return }
+        if job.isWorkshopImport {
+            launchWorkshopImport(job)
+            return
+        }
         if job.needsRepair, let folder = job.partialFolder {
             do {
                 try FileManager.default.removeItem(at: folder.appendingPathComponent("presentation.json"))
@@ -197,7 +367,7 @@ final class AppModel: ObservableObject {
         job.folder = nil
         job.isFinished = false
         job.isCancelled = false
-        let destination = libraryDirectory
+        let destination = job.destinationRoot ?? libraryDirectory
         let cookies = job.cookieSource.argument
         let maxHeight = job.quality.height
         let jobID = job.id
@@ -228,6 +398,14 @@ final class AppModel: ObservableObject {
                     cancellation.cancel()
                 }
                 await self.finishJob(jobID, folder: folder)
+            } catch let error as TalkDownloadError {
+                if case .outputExists(let folder) = error {
+                    await self.duplicateJob(jobID, folder: folder)
+                } else if cancellation.isCancelled {
+                    await self.cancelledJob(jobID)
+                } else {
+                    await self.failJob(jobID, message: error.localizedDescription)
+                }
             } catch {
                 if cancellation.isCancelled || error is CancellationError {
                     await self.cancelledJob(jobID)
@@ -270,6 +448,20 @@ final class AppModel: ObservableObject {
         refreshLibrary()
     }
 
+    private func duplicateJob(_ id: UUID, folder: URL) {
+        downloadTasks.removeValue(forKey: id)
+        guard let job = jobs.first(where: { $0.id == id }) else { return }
+        job.folder = FileManager.default.fileExists(atPath: folder.appendingPathComponent("presentation.json").path) ? folder : nil
+        job.partialFolder = nil
+        job.progress = 1
+        job.status = "Already in your library — no files were changed"
+        job.error = nil
+        job.isFinished = true
+        job.isDuplicate = true
+        persistPendingDownloads()
+        refreshLibrary()
+    }
+
     private func failJob(_ id: UUID, message: String) {
         downloadTasks.removeValue(forKey: id)
         guard let job = jobs.first(where: { $0.id == id }) else { return }
@@ -297,7 +489,10 @@ final class AppModel: ObservableObject {
                 url: record.url,
                 title: record.title,
                 cookieSource: BrowserCookies(rawValue: record.cookieSource) ?? .none,
-                quality: VideoQuality(rawValue: record.quality) ?? .p1080
+                quality: VideoQuality(rawValue: record.quality) ?? .p1080,
+                isWorkshopImport: record.isWorkshopImport ?? false,
+                destinationRoot: record.destinationRootPath.map { URL(fileURLWithPath: $0, isDirectory: true) },
+                collectionFolder: record.collectionFolderPath.map { URL(fileURLWithPath: $0, isDirectory: true) }
             )
             job.progress = record.progress
             if let path = record.partialFolderPath {
@@ -322,7 +517,10 @@ final class AppModel: ObservableObject {
                 cookieSource: job.cookieSource.rawValue,
                 quality: job.quality.rawValue,
                 partialFolderPath: job.partialFolder?.path,
-                needsRepair: job.needsRepair
+                needsRepair: job.needsRepair,
+                destinationRootPath: job.destinationRoot?.path,
+                collectionFolderPath: job.collectionFolder?.path,
+                isWorkshopImport: job.isWorkshopImport
             )
         }
         if let data = try? JSONEncoder().encode(pending) {
@@ -368,6 +566,73 @@ final class AppModel: ObservableObject {
         guard let data = try? Data(contentsOf: url),
               let manifest = try? JSONDecoder().decode(PresentationManifest.self, from: data) else { return nil }
         return LibraryItem(folder: folder, manifest: manifest)
+    }
+
+    private func loadLibraryEntry(at folder: URL) -> LibraryItem? {
+        if let talk = loadItem(at: folder) { return talk }
+        let workshopURL = folder.appendingPathComponent("workshop.json")
+        guard let data = try? Data(contentsOf: workshopURL),
+              let workshop = try? JSONDecoder().decode(WorkshopManifest.self, from: data) else { return nil }
+        let childFolders = (try? FileManager.default.contentsOfDirectory(
+            at: folder,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        )) ?? []
+        let talks = childFolders.compactMap(loadItem(at:))
+            .sorted { $0.manifest.title.localizedStandardCompare($1.manifest.title) == .orderedAscending }
+        let summary = PresentationManifest(
+            title: workshop.title,
+            speaker: workshop.organizers,
+            source: workshop.source,
+            duration: nil,
+            video: nil,
+            slides: [],
+            details: TalkDetails(
+                speakers: [],
+                conference: workshop.conference,
+                year: workshop.year,
+                eventType: "Workshop",
+                location: workshop.location
+            )
+        )
+        return LibraryItem(folder: folder, manifest: summary, workshop: workshop, workshopTalks: talks)
+    }
+
+    private func libraryItem(matching url: String) -> LibraryItem? {
+        let key = canonicalEventKey(url)
+        for item in library {
+            if canonicalEventKey(item.manifest.source) == key { return item }
+            if let child = item.workshopTalks.first(where: { canonicalEventKey($0.manifest.source) == key }) {
+                return child
+            }
+        }
+        return nil
+    }
+
+    private func canonicalEventKey(_ value: String) -> String {
+        guard let url = URL(string: value) else { return value }
+        let parts = url.pathComponents.filter { $0 != "/" }
+        if let virtual = parts.firstIndex(of: "virtual"),
+           parts.indices.contains(virtual + 1),
+           let id = parts.last,
+           id.allSatisfy(\.isNumber) {
+            let eventKinds: Set<String> = [
+                "workshop", "tutorial", "invited-talk", "keynote-talk", "talk", "oral", "poster", "session", "competition"
+            ]
+            let kind = parts.first(where: eventKinds.contains) ?? "event"
+            return "neurips:\(parts[virtual + 1]):\(kind):\(id)"
+        }
+        return value.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    }
+
+    private func safeFileName(_ value: String) -> String {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_"))
+        let normalized = value.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
+        return normalized.unicodeScalars.map { allowed.contains($0) ? Character(String($0)) : "-" }
+            .reduce(into: "") { result, character in
+                if character != "-" || result.last != "-" { result.append(character) }
+            }
+            .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
     }
 
     private func auditCompletedDownloads() async {

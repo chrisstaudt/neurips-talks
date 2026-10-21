@@ -13,6 +13,24 @@ struct ContentView: View {
             Group {
                 if model.showingDownloader || model.selected == nil {
                     DownloadView(model: model)
+                } else if let selected = model.selected, selected.isWorkshop {
+                    WorkshopView(
+                        item: selected,
+                        model: model,
+                        sidebarVisible: columnVisibility != .detailOnly,
+                        toggleSidebar: {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                columnVisibility = columnVisibility == .detailOnly ? .all : .detailOnly
+                            }
+                        },
+                        enterFullScreen: {
+                            columnVisibility = .detailOnly
+                            DispatchQueue.main.async {
+                                NSApp.keyWindow?.toggleFullScreen(nil)
+                            }
+                        }
+                    )
+                    .id(selected.id)
                 } else if let selected = model.selected {
                     PlayerView(
                         item: selected,
@@ -136,15 +154,25 @@ struct ContentView: View {
                                     .foregroundStyle(isSelected ? selectedSidebarText : Color.neuripsAccent)
                                     .lineLimit(1)
                             }
-                            if !item.manifest.displaySpeakers.isEmpty {
+                            if item.isWorkshop, let workshop = item.workshop {
+                                Label(
+                                    "\(item.workshopTalks.count) of \(workshop.schedule.filter(\.hasVideo).count) recordings downloaded",
+                                    systemImage: "rectangle.stack.badge.play"
+                                )
+                                .font(.caption)
+                                .foregroundStyle(isSelected ? selectedSidebarText.opacity(0.82) : Color.secondary)
+                                .lineLimit(1)
+                            } else if !item.manifest.displaySpeakers.isEmpty {
                                 Label(item.manifest.displaySpeakers, systemImage: "person.2")
                                     .font(.caption)
                                     .foregroundStyle(isSelected ? selectedSidebarText.opacity(0.82) : Color.secondary)
                                     .lineLimit(1)
                             }
-                            Label("\(item.manifest.slides.count) slides", systemImage: "rectangle.stack")
-                                .font(.caption)
-                                .foregroundStyle(isSelected ? selectedSidebarText.opacity(0.82) : Color.secondary)
+                            if !item.isWorkshop {
+                                Label("\(item.manifest.slides.count) slides", systemImage: "rectangle.stack")
+                                    .font(.caption)
+                                    .foregroundStyle(isSelected ? selectedSidebarText.opacity(0.82) : Color.secondary)
+                            }
                         }
                         .padding(.vertical, 5)
                         .tag(Optional(item.id))

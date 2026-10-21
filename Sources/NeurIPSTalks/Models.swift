@@ -49,8 +49,52 @@ struct PresentationManifest: Codable, Hashable {
 struct LibraryItem: Identifiable, Hashable {
     let folder: URL
     let manifest: PresentationManifest
+    let workshop: WorkshopManifest?
+    let workshopTalks: [LibraryItem]
+
+    init(
+        folder: URL,
+        manifest: PresentationManifest,
+        workshop: WorkshopManifest? = nil,
+        workshopTalks: [LibraryItem] = []
+    ) {
+        self.folder = folder
+        self.manifest = manifest
+        self.workshop = workshop
+        self.workshopTalks = workshopTalks
+    }
 
     var id: String { folder.path }
+    var isWorkshop: Bool { workshop != nil }
+
+    func downloadedTalk(for segment: WorkshopSegment) -> LibraryItem? {
+        workshopTalks.first {
+            $0.manifest.source == segment.url ||
+            $0.manifest.source == "https://slideslive.com/\(segment.presentationID ?? "")"
+        }
+    }
+}
+
+struct WorkshopManifest: Codable, Hashable {
+    let title: String
+    let source: String
+    let abstract: String
+    let organizers: String
+    let conference: String
+    let year: Int?
+    let location: String?
+    let schedule: [WorkshopSegment]
+}
+
+struct WorkshopSegment: Codable, Hashable, Identifiable {
+    let id: String
+    let time: String
+    let title: String
+    let url: String
+    let presentationID: String?
+    let abstract: String?
+
+    var hasVideo: Bool { presentationID?.isEmpty == false }
 }
 
 enum BrowserCookies: String, CaseIterable, Identifiable {

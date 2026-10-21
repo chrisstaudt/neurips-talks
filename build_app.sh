@@ -88,6 +88,7 @@ else
   echo "Warning: app built without yt-dlp. Run with --download-tools to bundle it."
 fi
 
+/usr/bin/xattr -cr "$APP_DIR"
 codesign --force --deep --sign - "$APP_DIR"
 codesign --verify --deep --strict "$APP_DIR"
 echo "Built: $APP_DIR"

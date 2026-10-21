@@ -28,6 +28,21 @@ struct PlayerView: View {
     let sidebarVisible: Bool
     let toggleSidebar: () -> Void
     let enterFullScreen: () -> Void
+    let topPadding: CGFloat
+
+    init(
+        item: LibraryItem,
+        sidebarVisible: Bool,
+        toggleSidebar: @escaping () -> Void,
+        enterFullScreen: @escaping () -> Void,
+        topPadding: CGFloat = 42
+    ) {
+        self.item = item
+        self.sidebarVisible = sidebarVisible
+        self.toggleSidebar = toggleSidebar
+        self.enterFullScreen = enterFullScreen
+        self.topPadding = topPadding
+    }
 
     @State private var player: AVPlayer?
     @State private var playerPreparationTask: Task<Void, Never>?
@@ -134,7 +149,7 @@ struct PlayerView: View {
             }
         }
         .padding(.horizontal, 18)
-        .padding(.top, 42)
+        .padding(.top, topPadding)
         .padding(.bottom, 16)
     }
 

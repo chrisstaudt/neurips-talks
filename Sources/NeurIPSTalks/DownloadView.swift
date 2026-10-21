@@ -248,21 +248,25 @@ private struct DownloadJobRow: View {
                 .stroke(statusColor.opacity(0.18), lineWidth: 1)
         }
         .confirmationDialog(
-            "Remove partial download?",
+            job.partialFolder == nil ? "Remove from queue?" : "Delete partial download?",
             isPresented: $confirmingRemoval,
             titleVisibility: .visible
         ) {
-            Button("Delete Partial Files", role: .destructive, action: remove)
+            Button(job.partialFolder == nil ? "Remove from Queue" : "Delete Partial Files", role: .destructive, action: remove)
             Button("Keep Download", role: .cancel) {}
         } message: {
-            Text("This permanently deletes the downloaded portions of “\(job.title)”.")
+            if job.partialFolder == nil {
+                Text("This removes “\(job.title)” from the queue. No completed library files will be deleted.")
+            } else {
+                Text("This permanently deletes only the incomplete files for “\(job.title)”. Completed library items are not affected.")
+            }
         }
     }
 
     @ViewBuilder private var actions: some View {
         if job.folder != nil {
             Button(action: watch) {
-                Label("Watch", systemImage: "play.fill")
+                Label(openActionLabel, systemImage: job.isDuplicate ? "books.vertical.fill" : "arrow.right.circle.fill")
             }
             .buttonStyle(.borderedProminent)
             .tint(.neuripsTeal)
@@ -292,6 +296,10 @@ private struct DownloadJobRow: View {
     }
 
     private var statusLabel: String {
+        if job.isWorkshopImport && job.isDuplicate { return "Workshop already added" }
+        if job.isWorkshopImport && job.isFinished && job.folder != nil { return "Workshop added" }
+        if job.isWorkshopImport && !job.isFinished { return "Importing workshop" }
+        if job.isDuplicate { return "Already downloaded" }
         if job.needsRepair && job.isFinished { return "Repair needed" }
         if job.isCancelled { return "Ready to resume" }
         if job.error != nil { return "Needs attention" }
@@ -299,6 +307,8 @@ private struct DownloadJobRow: View {
     }
 
     private var statusIcon: String {
+        if job.isWorkshopImport { return job.isFinished ? "rectangle.stack.fill" : "calendar.badge.clock" }
+        if job.isDuplicate { return "doc.on.doc.fill" }
         if job.needsRepair && job.isFinished { return "wrench.and.screwdriver.fill" }
         if job.isCancelled { return "pause.fill" }
         if job.error != nil { return "exclamationmark" }
@@ -306,9 +316,16 @@ private struct DownloadJobRow: View {
     }
 
     private var statusColor: Color {
+        if job.isWorkshopImport { return job.isFinished ? .neuripsTeal : .neuripsAccent }
+        if job.isDuplicate { return .neuripsAccent }
         if job.needsRepair && job.isFinished { return .neuripsOrange }
         if job.isCancelled { return .neuripsOrange }
         if job.error != nil { return .red }
         return job.isFinished ? .neuripsTeal : .neuripsAccent
+    }
+
+    private var openActionLabel: String {
+        if job.isWorkshopImport { return "Open Workshop" }
+        return job.isDuplicate ? "View in Library" : "Open"
     }
 }
