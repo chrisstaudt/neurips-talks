@@ -34,6 +34,7 @@ final class WorkshopLoaderTests: XCTestCase {
 
     func testWorkshopURLRecognition() {
         XCTAssertTrue(WorkshopLoader.isWorkshopURL("https://neurips.cc/virtual/2025/loc/san-diego/workshop/109537"))
+        XCTAssertTrue(WorkshopLoader.isWorkshopURL("https://icml.cc/virtual/2025/workshops/12345"))
         XCTAssertFalse(WorkshopLoader.isWorkshopURL("https://neurips.cc/virtual/2025/invited-talk/109602"))
         XCTAssertFalse(WorkshopLoader.isWorkshopURL("https://slideslive.com/39055728"))
     }

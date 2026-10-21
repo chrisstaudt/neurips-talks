@@ -8,7 +8,7 @@ enum WorkshopImportError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .invalidURL:
-            "Paste a valid NeurIPS workshop URL."
+            "Paste a valid conference workshop URL."
         case .unreadablePage:
             "The workshop page could not be read. If it is restricted, make it public in a browser first and try again."
         case .noSchedule:
@@ -22,8 +22,8 @@ struct WorkshopLoader {
 
     static func isWorkshopURL(_ value: String) -> Bool {
         guard let url = URL(string: value),
-              url.host?.lowercased().hasSuffix("neurips.cc") == true else { return false }
-        return url.pathComponents.contains("workshop")
+              ConferenceSite.identify(url) != nil else { return false }
+        return url.pathComponents.contains { ["workshop", "workshops"].contains($0.lowercased()) }
     }
 
     static func load(
@@ -38,7 +38,7 @@ struct WorkshopLoader {
         // The workshop page contains the complete schedule, but detailed abstracts
         // live on the individual event pages. Fetch recorded entries in small
         // batches so the imported workshop remains useful offline without placing
-        // excessive parallel load on neurips.cc.
+        // excessive parallel load on the conference site.
         var abstracts: [String: String] = [:]
         let recorded = manifest.schedule.filter(\.hasVideo)
         update("Reading details for \(recorded.count) recordings…", 0.22)
@@ -135,9 +135,7 @@ struct WorkshopLoader {
         guard !schedule.isEmpty else { throw WorkshopImportError.noSchedule }
 
         let components = source.pathComponents.filter { $0 != "/" }
-        let year = components.firstIndex(of: "virtual").flatMap { index in
-            components.indices.contains(index + 1) ? Int(components[index + 1]) : nil
-        }
+        let year = ConferenceSite.year(in: source)
         let location: String? = components.firstIndex(of: "loc").flatMap { index -> String? in
             guard components.indices.contains(index + 1) else { return nil }
             return components[index + 1].split(separator: "-").map { $0.capitalized }.joined(separator: " ")
@@ -147,7 +145,7 @@ struct WorkshopLoader {
             source: source.absoluteString,
             abstract: workshopAbstract,
             organizers: organizers,
-            conference: "NeurIPS",
+            conference: ConferenceSite.identify(source)?.name ?? "Conference",
             year: year,
             location: location,
             schedule: schedule

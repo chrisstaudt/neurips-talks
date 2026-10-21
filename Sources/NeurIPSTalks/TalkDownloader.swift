@@ -122,7 +122,7 @@ struct TalkDownloader {
         let output = library.appendingPathComponent(safeName("\(talkID)-\(title)"), isDirectory: true)
         discoveredPresentation(title, output)
         update("Reading conference details…", 0.04)
-        var talkDetails = await NeurIPSMetadata.load(from: pageURL)
+        var talkDetails = await ConferenceMetadata.load(from: pageURL)
         try cancellation.check()
         let fallbackSpeaker = metadata["uploader"] as? String ?? metadata["channel"] as? String ?? ""
         if !fallbackSpeaker.isEmpty, talkDetails?.speakers.isEmpty != false {

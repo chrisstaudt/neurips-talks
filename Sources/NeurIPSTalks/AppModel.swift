@@ -166,7 +166,7 @@ final class AppModel: ObservableObject {
     func startDownload() {
         let input = downloadURL.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !input.isEmpty, URL(string: input) != nil else {
-            lastError = "Paste a valid NeurIPS or SlidesLive URL."
+            lastError = "Paste a valid conference or SlidesLive URL."
             return
         }
         lastError = nil
@@ -612,15 +612,15 @@ final class AppModel: ObservableObject {
     private func canonicalEventKey(_ value: String) -> String {
         guard let url = URL(string: value) else { return value }
         let parts = url.pathComponents.filter { $0 != "/" }
-        if let virtual = parts.firstIndex(of: "virtual"),
-           parts.indices.contains(virtual + 1),
+        if let site = ConferenceSite.identify(url),
            let id = parts.last,
            id.allSatisfy(\.isNumber) {
             let eventKinds: Set<String> = [
                 "workshop", "tutorial", "invited-talk", "keynote-talk", "talk", "oral", "poster", "session", "competition"
             ]
             let kind = parts.first(where: eventKinds.contains) ?? "event"
-            return "neurips:\(parts[virtual + 1]):\(kind):\(id)"
+            let year = ConferenceSite.year(in: url).map(String.init) ?? "unknown"
+            return "\(site.identifier):\(year):\(kind):\(id)"
         }
         return value.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
     }

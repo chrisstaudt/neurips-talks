@@ -67,7 +67,7 @@ struct DownloadView: View {
                     .font(.title3)
                     .foregroundStyle(Color.neuripsAccent)
 
-                TextField("Paste a NeurIPS or SlidesLive URL", text: $model.downloadURL)
+                TextField("Paste a conference or SlidesLive URL", text: $model.downloadURL)
                     .textFieldStyle(.plain)
                     .font(.body)
                     .focused($focused)
@@ -90,6 +90,10 @@ struct DownloadView: View {
                 RoundedRectangle(cornerRadius: 11, style: .continuous)
                     .stroke(focused ? Color.neuripsAccent : Color.primary.opacity(0.12), lineWidth: focused ? 2 : 1)
             }
+
+            Text("Supports SlidesLive talks from NeurIPS, ICML, ICLR, AISTATS, MLSys, and other conference sites.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
 
             HStack(spacing: 24) {
                 VStack(alignment: .leading, spacing: 6) {
